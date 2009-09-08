@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Module>
+    <ModulePrefs title="FishEye" author_email="scai@atlassian.com" height="500">
+        <Require feature="dynamic-height"/>
+        <Require feature="minimessage"/>
+    </ModulePrefs>
+    <UserPref name="fe_host" display_name="FishEye Host" datatype="string" default_value="https://studio.atlassian.com/source"/>
+    <UserPref name="username" display_name="Username" datatype="string" default_value=""/>
+    <UserPref name="password" display_name="Password" datatype="string" default_value=""/>        
+    <Content type="html">
+        <![CDATA[
+        <style>
+
+            div#options {
+                background-color: #eeeeee;
+                font-size:12px;
+                padding: 1em 1em 1em 1em;
+            }
+
+            div#results {
+                padding: 1em 1em 1em 1em;
+                font-size: 12px;
+                font-family: Monospaced;
+            }
+            
+        </style>
+        
+        <script src="http://jqueryjs.googlecode.com/files/jquery-1.3.2.min.js"></script>
+        <script type="text/javascript">
+
+        var repo, FishEyeHost, RestEndPoint, Username, Password, MiniMesssage ;
+
+        gadgets.util.registerOnLoadHandler(init);
+        function init() {
+            // fetch prefs
+            var prefs = new gadgets.Prefs();
+            FishEyeHost = prefs.getString("fe_host").trim();
+            RestEndPoint = FishEyeHost + "/api/rest";   
+            Username = prefs.getString("username").trim();
+            Password = prefs.getString("password").trim();
+            
+            MiniMessage = new gadgets.MiniMessage();
+            /*-
+            var xml = "<response><string>ACC</string><string>AMPS</string><string>PL</string><string>PLE</string><string>PLUG</string></response>";
+            var jq = $(xml);
+            var x;
+            $.each(jq.find("string"), function(){
+                LogUtil.debug($(this).text());
+            });
+            */
+           
+            
+            if(Username && Password) {
+                FeLogin(Username, Password);
+            } else {
+                LogUtil.hint("You are not logged in. You can only see public repositories.");
+            }
+            //getRepoList();
+            $("#search").click(function(){doSearch();});
+            gadgets.window.adjustHeight();
+            
+        }
+                
+        function FeLogin(username, password) {
+            var params = {},
+                url = RestEndPoint + "/login?username=" + username + "&password=" + password,
+                authToken = "",
+                handle = function(obj) {
+                    if(obj.errors.length) {
+                        LogUtil.warning("Sign-in failed. <br> " + obj.errors.join("<br>"));
+                        authToken = null;
+                    } else {
+                        var jqResult = $("<root>" + obj.text + "</root>"),
+                            hasError = false;
+                                                
+                        jqResult.find("error").each(function() {
+                            hasError = true;
+                            LogUtil.warning("Sign-in failed: " + $(this).text());
+                            return false;
+                        });
+                    }
+                                
+                    if(!hasError) {
+                        authToken = jqResult.find("response string").text();
+                        console.log(authToken);
+                        LogUtil.hint("Signed in. Welcome " + Username);
+                    } 
+                };
+                
+            LogUtil.hint("Signing in. Please wait...");     
+            params[gadgets.io.RequestParameters.CONTENT_TYPE] = gadgets.io.ContentType.TEXT;       
+            gadgets.io.makeRequest(url, handle, params);            
+        }
+
+        function getRepoList() {
+            info("getRepoList");
+            var params = {},
+                url = FishEyeHost + "/api/rest/repositories",
+                handleResp = function(obj) {
+                    if(obj.errors.length) {
+                        alert("Failed to get repository list.\n " + obj.errors.join(", "));
+                    } else {
+                        info(obj.data.childNodes[0].childNodes.length);
+                        $.each(obj.data.childNodes[0].childNodes, function(){
+                            if(this.nodeName == "string") {
+                                var v = this.childNodes[0].data;
+                                $("<option />").html(v).attr("value", v).appendTo($("select#repos"));
+                            }
+                        });
+                    }                
+                };
+                
+            params[gadgets.io.RequestParameters.CONTENT_TYPE] = gadgets.io.ContentType.DOM;
+            gadgets.io.makeRequest(url, handleResp, params);
+        };
+
+        function getSearchResults(url) {
+            var params = {},
+                count = 0,
+                handleResp = function(obj) {
+                    if(obj.errors.length) {
+                        alert("Failed to get search result list.\n " + obj.errors.join(", "));
+                    } else {
+                        $.each(obj.data.childNodes[0].childNodes, function(){
+                            if(count > 10) {
+                                showIgnoreMsg()
+                                return false;
+                            }
+                            var path, revision;
+                            if(this.nodeName == "row") {
+                                count++
+                                $.each(this.childNodes, function() {
+                                    if(this.nodeName == "path") {
+                                        path = this.childNodes[0].data;
+                                    } else if(this.nodeName == "revision") {
+                                        revision = this.childNodes[0].data;
+                                    } else {
+                                        // ignore
+                                    }
+                                });
+                            }
+                            addToResult(path, revision);
+                        });
+                    }
+                    gadgets.window.adjustHeight();
+                    info("search handler exit");
+                };
+            info("Please Wait<br>"+url);
+            params[gadgets.io.RequestParameters.CONTENT_TYPE] = gadgets.io.ContentType.DOM;
+            gadgets.io.makeRequest(url, handleResp, params);
+        }
+
+        function doSearch() {
+            repo = $("#repos").val();
+            var url = buildQuery(repo, $("#keyword").val());
+            $("#results").children().remove();
+            getSearchResults(url);
+        }
+
+        function buildQuery(rep, keyword) {
+            var buff = [];
+            buff.push(FishEyeHost);
+            buff.push("/api/rest/query?");
+            buff.push("rep=");
+            buff.push(rep);
+            buff.push("&query=");
+            buff.push("select%20revisions%20where%20is%20head%20and%20path%20like%20*");
+            buff.push(keyword);
+            buff.push("*%20return%20path,%20revision");
+            return buff.join("");
+        }
+
+        function addToResult(path, revision) {
+            var link = "https://studio.atlassian.com/source/browse/" + repo + "/" + path;
+            $("<div />").append($("<a />").attr("href", link).attr("target", "_blank").attr("title", "open in new window").html(path)).appendTo($("#results"));
+        }
+
+        function showIgnoreMsg() {
+            $("<div />").html("There are more, but are now displayed.").appendTo($("#results"));
+        }
+
+        function info(txt) {
+            console.log("[FishEye Gadget] "+txt);
+        }
+        
+        var LogUtil = {
+            previousHint: null,
+            
+            hint: function(text) {
+                MiniMessage.dismissMessage(this.previousHint);
+                this.previousHint = MiniMessage.createDismissibleMessage(text);
+            },
+            
+            warning: function(text) {
+                MiniMessage.dismissMessage(this.previousHint);
+                previousHint = MiniMessage.createDismissibleMessage(text);
+                previousHint.style.backgroundColor = "red";
+                previousHint.style.color = "white";
+            },
+            
+            debug: function(text) {
+                var m = MiniMessage.createDismissibleMessage(text);
+                m.style.color = "blue";
+            }
+        };
+        </script>
+
+        <!-- The code for Canvas view is here. -->
+        <div id="main">
+                <div id="options">
+                    <select id="repos">
+                    </select> 
+                    <input type="text" id="keyword" /> 
+                    <button id="search">Search</button>
+                </div>
+                <div id="results"></div>
+            </div>
+
+        </div>
+
+        ]]>
+    </Content>
+</Module>
